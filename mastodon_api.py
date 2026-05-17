@@ -383,17 +383,51 @@ class mastodon(object):
 			self.prefs.bluesky_service = creds['service_url']
 
 		# Initialize the client and login
+		handle = self.prefs.bluesky_handle
+		service = self.prefs.bluesky_service
+		pw_len = len(self.prefs.bluesky_password or "")
+		if _logger:
+			_logger.info(
+				"Bluesky login attempt: handle=%r service=%r password_length=%d",
+				handle, service, pw_len,
+			)
 		try:
-			self.api = Client(base_url=self.prefs.bluesky_service)
-			raw_profile = self.api.login(self.prefs.bluesky_handle, self.prefs.bluesky_password)
+			self.api = Client(base_url=service)
+			raw_profile = self.api.login(handle, self.prefs.bluesky_password)
 			self.me = bluesky_profile_to_universal(raw_profile)
+			if _logger:
+				_logger.info("Bluesky login OK: did=%s handle=%s",
+					getattr(raw_profile, 'did', '?'),
+					getattr(raw_profile, 'handle', '?'))
 		except AtProtocolError as e:
+			# RequestErrorBase subclasses (Unauthorized, BadRequest, etc.)
+			# carry a .response with status_code/content/headers. Dump everything
+			# we can to make 403s and friends diagnosable from fastsm.log.
+			if _logger:
+				resp = getattr(e, 'response', None)
+				status = getattr(resp, 'status_code', None)
+				content = getattr(resp, 'content', None)
+				headers = getattr(resp, 'headers', None)
+				err_name = getattr(content, 'error', None) if content is not None else None
+				err_msg = getattr(content, 'message', None) if content is not None else None
+				_logger.error(
+					"Bluesky login failed (%s): handle=%r service=%r "
+					"status=%s xrpc_error=%r xrpc_message=%r headers=%r exc=%s",
+					type(e).__name__, handle, service,
+					status, err_name, err_msg, headers, e,
+					exc_info=True,
+				)
 			speak.speak("Error logging into Bluesky: " + str(e))
 			# Clear credentials
 			self.prefs.bluesky_handle = ""
 			self.prefs.bluesky_password = ""
 			_exit_app()
 		except Exception as e:
+			if _logger:
+				_logger.exception(
+					"Bluesky login non-AtProtocolError: handle=%r service=%r exc=%s",
+					handle, service, e,
+				)
 			speak.speak("Error connecting to Bluesky: " + str(e))
 			_exit_app()
 
